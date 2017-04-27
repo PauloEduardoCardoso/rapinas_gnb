@@ -3,7 +3,8 @@
 #' http://www.khufkens.com/2016/04/20/modis-hdf-data-extraction-in-r/
 #' https://pvanb.wordpress.com/2012/11/07/opening-modis-tiles-in-qgis/
 #' https://explorer.earthengine.google.com/#search/tag:modis
-#' 
+#'
+#'------------------------------- LOAD Pack -----------------------------------
 kpacks <- c('raster', 'rgdal', 'gdalUtils','tidyverse',
             'lubridate', 'stringr',
             'ggplot2')
@@ -12,28 +13,28 @@ if(length(new.packs)) install.packages(new.packs)
 lapply(kpacks, require, character.only=T)
 remove(kpacks, new.packs)
 
-#' ------------------------------ ADMIN DATA -------------------------------
-aoi <- readRDS(file.path(getwd(),'rdata', 'GNB_adm2.rds'))
-
-aoiutm38n <- spTransform(aoi, crs_utm38n)
-plot(aoiutm38n)
-mybbox <- extent(aoiutm38n)
-#' -------------------------------------------------------------------------
-
-#' ------------------------------- CRS -------------------------------------
+#' -------------------------------- CRS ---------------------------------------
 crs_wgs84 <- CRS('+init=EPSG:4326')
 crs_utm38n <- CRS('+init=EPSG:32628')
 crs_sinu <- '+proj=sinu +lon_0=0 +x_0=0 +y_0=0 +a=6371007.181 +b=6371007.181 +units=m +no_defs'
-#' ---------------------------------------------------------------------------
+#' ----------------------------------------------------------------------------
 
-#' --------------------------- GDAL Installation ------------------------------
-gdal_setInstallation(search_path = 'C:/OSGeo4W64/bin' # set my path to gdal
+#' --------------------------- ADMIN DATA Level 2 -----------------------------
+aoi <- readRDS(file.path(getwd(),'rdata', 'GNB_adm2.rds')) # WGS84
+aoiutm38n <- spTransform(aoi, crs_utm38n) # UTM 28N
+plot(aoiutm38n)
+mybbox <- extent(aoiutm38n)
+#' ----------------------------------------------------------------------------
+
+#' ------------------------- GDAL Installation --------------------------------
+gdal_setInstallation(search_path = 'C:/OSGeo4W64/bin' # set local path to gdal
                      , verbose=TRUE)
 getOption("gdalUtils_gdalPath")[[1]]$version # check version
 #' ----------------------------------------------------------------------------
 
-#' ----------------------------- Burned Area: MOD64A1 -------------------------
-#' Get a list of hdf names
+#' ----------------------- Burned Area: MOD64A1 -------------------------------
+#' 
+#'# Get a list of hdf names
 path2mod64a1 <- 'G:/Sig/raster/MODIS/MCD64A1' # change here to local path
 path2mod64a1tif <- 'G:/Sig/raster/MODIS/MCD64A1/tif'
 lhdf <- list.files(file.path(path2mod64a1), pattern = '.hdf$' # $:ending with .hdf
@@ -58,31 +59,36 @@ for(i in 1:length(lhdf)){
   )
 }
 
-#' Stack individual tif files
+#'# Stack individual tif files
 burn <- stack(list.files(file.path(path2mod64a1tif), pattern = 'tif$'
                          , full.names = T))
 
-#' Reclass rasterstack 
+#'# Reclass rasterstack --------------------------
 mt <- c(-Inf, 0, 0,  0, Inf, 1)
 rclmat <- matrix(mt, ncol=3, byrow=TRUE)
 rc <- reclassify(burn, rclmat)
 
-#' Get GNB Burned Area(for 2016)
+#'# Get/read GNB Burned Area(for 2016) -----------
 rcsum <- raster::calc(rc, fun = sum)
 rcsum <- projectRaster(rcsum, crs = crs_utm38n, res = 500, method="ngb",
                        filename = file.path(path2mod64a1tif, paste0('tburnedarea.tif')),
                        overwrite = TRUE)
-plot(rcsum)
+#'# Read GNB Burned Area(for 2016) --------------
+rcsum <- raster(file.path(path2mod64a1tif, paste0('tburnedarea.tif')))
 
-#' Burned area by Admin sector (level 2)
+#'# Burned area by Admin sector (level 2) --------
 gnb_burn <- raster::extract(rcsum, aoiutm38n
                             , fun = function(x,...) sum(x[x>0], na.rm = T)
                             , df = TRUE)
-gnb_burn <- gnb_burn %>%
-  mutate(admin2 = aoiutm38n@data$NAME_2
-         , adm_sqkm = rgeos::gArea(aoiutm38n, byid=T)/1000000
-         , burn_sqkm = (tburnedarea * 0.25)
-         , frac = burn_sqkm/adm_sqkm)
+df_gnb_burn <- gnb_burn %>%
+  dplyr::select(npixel = tburnedarea) %>%
+  dplyr::mutate(admin2 = aoiutm38n@data$NAME_2
+                , adm_sqkm = rgeos::gArea(aoiutm38n, byid=T)/1000000
+                , burn_sqkm = (npixel * 0.25)
+                , frac = round(burn_sqkm/adm_sqkm, 3)
+  ) %>%
+  write.csv(., file.path(getwd(),'/output/gnb_burned_area2016.csv')
+            ,row.names = F)
 #' ----------------------------------------------------------------------------
 
 #' ----------------------------- MODIS Vegetation -----------------------------
@@ -104,9 +110,9 @@ for(i in 1:length(lhdf)){
   )
 }
 unlist(lapply(lhdf, function(x) paste0(substr(x, 10, 16))))
-                         
+
 lapply(lhdf, function(x){as.Date(paste0(substr(x, 10, 16)), format=c("%Y%j"))}, USE.NAMES = F)
-                       
+
 
 #' Stack individual tif files
 ndvi <- stack(list.files(file.path(path2mod13q1tif), pattern = 'tif$'
